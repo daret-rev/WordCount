@@ -4,25 +4,25 @@
 #include <iostream>
 
 // Ошибки для обратной связи в консоли
-const constexpr char* argError = "Invalid argument, use `-h` or `--help`";
-const constexpr char* fileOpenError = "Failed to open file";
-const constexpr char* readFileError = "Failed to read file";
-const constexpr char* runtimeError = "Runtime error";
+const constexpr char* kArgError = "Invalid argument, use `-h` or `--help`";
+const constexpr char* kFileOpenError = "Failed to open file";
+const constexpr char* kReadFileError = "Failed to read file";
+const constexpr char* kRuntimeError = "Runtime error";
 
 // Цвета для форматирования шрифта вывода
 struct Color {
-    static constexpr const char* RESET = "\033[0m";
-    static constexpr const char* RED = "\033[31m";
-    static constexpr const char* GREEN = "\033[32m";
-    static constexpr const char* YELLOW = "\033[33m";
-    static constexpr const char* BLUE = "\033[34m";
-    static constexpr const char* MAGENTA = "\033[35m";
-    static constexpr const char* CYAN = "\033[36m";
+    static constexpr const char* kReset = "\033[0m";
+    static constexpr const char* kRed = "\033[31m";
+    static constexpr const char* kGreen = "\033[32m";
+    static constexpr const char* kYellow = "\033[33m";
+    static constexpr const char* kBlue = "\033[34m";
+    static constexpr const char* kMagenta = "\033[35m";
+    static constexpr const char* kCyan = "\033[36m";
 };
 
 // Метод помошник - для ознакомления с синтаксисом утилиты
 void Help() {
-    std::cout << Color::CYAN << "Use syntax:\n\n" << Color::MAGENTA;
+    std::cout << Color::kCyan << "Use syntax:\n\n" << Color::kMagenta;
 
     printf(
         "Короткий аргумент | Длинный аргумент |                Описание        "
@@ -53,7 +53,7 @@ void Help() {
         "----------------------------------------------------------------------"
         "-------\n\n");
 
-    std::cout << Color::RESET;
+    std::cout << Color::kReset;
 }
 
 struct File {
@@ -71,15 +71,15 @@ struct File {
         place = true;
     }
 
-    bool isOpen() const { return file != nullptr; }
+    bool IsOpen() const { return file != nullptr; }
 
-    void close() const {
+    void Close() const {
         if (file != nullptr) {
             fclose(file);
         }
     }
 
-    void clear() const {
+    void Clear() const {
         if (file != nullptr) {
             rewind(file);
         }
@@ -97,7 +97,7 @@ void FreeFiles(File* files) {
         if (file.place) {
             break;
         } else {
-            file.close();
+            file.Close();
         }
     }
 
@@ -114,15 +114,15 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
         const char* arg = argv[i];
 
         if (strlen(arg) < 2) {
-            *err = argError;
+            *err = kArgError;
             free(files);
             return nullptr;
         }
 
         if (arg[0] != '-') {
             File file{arg};
-            if (!file.isOpen()) {
-                *err = fileOpenError;
+            if (!file.IsOpen()) {
+                *err = kFileOpenError;
                 FreeFiles(files);
                 return nullptr;
             } else {
@@ -136,7 +136,7 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
                     if (new_files != nullptr) {
                         files = new_files;
                     } else {
-                        *err = runtimeError;
+                        *err = kRuntimeError;
                         FreeFiles(files);
                         // free(new_files);
                         return nullptr;
@@ -154,7 +154,7 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
                 } else if (strcmp(arg, "--alnum") == 0) {
                     *alnum = true;
                 } else {
-                    *err = argError;
+                    *err = kArgError;
                     FreeFiles(files);
                     return nullptr;
                 }
@@ -178,7 +178,7 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
                             break;
                         }
                         default: {
-                            *err = argError;
+                            *err = kArgError;
                             FreeFiles(files);
                             return nullptr;
                         }
@@ -193,10 +193,10 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
 }
 
 size_t CountBytes(const File* file, const char** err) {
-    if (file->place || !file->isOpen()) {
-        *err = readFileError;
+    if (file->place || !file->IsOpen()) {
+        *err = kReadFileError;
         return 0;
-    } file->clear();
+    } file->Clear();
 
     size_t size = 0;
     char buffer[4096 * 2];
@@ -207,7 +207,7 @@ size_t CountBytes(const File* file, const char** err) {
     }
 
     if (ferror(file->file)) {
-        *err = readFileError;
+        *err = kReadFileError;
         return 0;
     }
 
@@ -215,11 +215,11 @@ size_t CountBytes(const File* file, const char** err) {
 }
 
 size_t CountWords(const File* file, const char** err) {
-    if (file->place || !file->isOpen()) {
-        *err = readFileError;
+    if (file->place || !file->IsOpen()) {
+        *err = kReadFileError;
         return 0;
     }
-    file->clear();
+    file->Clear();
 
     size_t size = 0;
 
@@ -228,7 +228,7 @@ size_t CountWords(const File* file, const char** err) {
     }
 
     if (ferror(file->file)) {
-        *err = readFileError;
+        *err = kReadFileError;
         return 0;
     }
 
@@ -236,11 +236,11 @@ size_t CountWords(const File* file, const char** err) {
 }
 
 size_t CountLines(const File* file, const char** err) {
-    if (file->place || !file->isOpen()) {
-        *err = readFileError;
+    if (file->place || !file->IsOpen()) {
+        *err = kReadFileError;
         return 0;
     }
-    file->clear();
+    file->Clear();
 
     size_t size = 0;
 
@@ -253,7 +253,7 @@ size_t CountLines(const File* file, const char** err) {
     }
 
     if (ferror(file->file)) {
-        *err = readFileError;
+        *err = kReadFileError;
         return 0;
     }
 
@@ -274,11 +274,11 @@ inline bool CheckLatinOrNumber(const int ch) {
 }
 
 size_t CountLatinsAndNumbers(const File* file, const char** err) {
-    if (file->place || !file->isOpen()) {
-        *err = readFileError;
+    if (file->place || !file->IsOpen()) {
+        *err = kReadFileError;
         return 0;
     }
-    file->clear();
+    file->Clear();
     
     size_t size = 0;
 
@@ -296,7 +296,7 @@ size_t CountLatinsAndNumbers(const File* file, const char** err) {
     }
 
     if (ferror(file->file)) {
-        *err = readFileError;
+        *err = kReadFileError;
         return 0;
     }
 
@@ -307,7 +307,7 @@ int main(int argc, char** argv) {
     // std::cout << "Labwork1!\n";
 
     if (argc < 2) {
-        std::cerr << argError << '\n';
+        std::cerr << kArgError << '\n';
         return 0;
     }
 
