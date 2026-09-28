@@ -58,12 +58,14 @@ void Help() {
 
 struct File {
     FILE* file;
-    char name[256]{};
+    const char* name = nullptr;
     bool place = false;
 
     File(const char* name) {
         file = fopen(name, "r");
-        strcpy(this->name, name);
+        // size_t len = strlen(name);
+        // name = new char[len+1];
+        this->name = name;
     }
 
     File() {
@@ -96,20 +98,19 @@ void FreeFiles(File* files) {
         ++f_i;
         if (file.place) {
             break;
-        } else {
-            file.Close();
         }
+        file.Close();
     }
 
     free(files);
 }
 
 File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
-                bool* bytes, bool* words, bool* alnum) {
+                bool* bytes, bool* words, bool* alnum, size_t* countFiles) {
     size_t capacity = 4;
     File* files = (File*)malloc(capacity * sizeof(File));
-    int f_i = 0;
-    files[f_i] = File{};
+    int fsize = 0;
+    files[fsize] = File{};
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
 
@@ -125,24 +126,23 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
                 *err = kFileOpenError;
                 FreeFiles(files);
                 return nullptr;
-            } else {
-                files[f_i] = file;
-                ++f_i;
-                files[f_i] = File{};
-                if (f_i >= capacity) {
-                    capacity += 4;
-                    File* new_files =
-                        (File*)realloc(files, capacity * sizeof(File));
-                    if (new_files != nullptr) {
-                        files = new_files;
-                    } else {
-                        *err = kRuntimeError;
-                        FreeFiles(files);
-                        // free(new_files);
-                        return nullptr;
-                    }
+            }
+            files[fsize] = file;
+            ++fsize;
+            if (fsize >= capacity-1) {
+                capacity += 4;
+                File* new_files =
+                    (File*)realloc(files, capacity * sizeof(File));
+                if (new_files != nullptr) {
+                    files = new_files;
+                } else {
+                    *err = kRuntimeError;
+                    FreeFiles(files);
+                    // free(new_files);
+                    return nullptr;
                 }
             }
+            files[fsize] = File{};
         } else {
             if (arg[1] == '-') {
                 if (strcmp(arg, "--lines") == 0) {
@@ -188,7 +188,8 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
         }
     }
 
-    files[f_i] = File{};
+    files[fsize] = File{};
+    *countFiles = fsize;
     return files;
 }
 
@@ -318,8 +319,9 @@ int main(int argc, char** argv) {
 
     bool lines = false, bytes = false, words = false, alnum = false;
     const char* err = "";
+    size_t countFiles = 0;
 
-    File* files = ParseArgs(argc, argv, &err, &lines, &bytes, &words, &alnum);
+    File* files = ParseArgs(argc, argv, &err, &lines, &bytes, &words, &alnum, &countFiles);
 
     if (strcmp(err, "") != 0) {
         std::cerr << err << '\n';
@@ -331,10 +333,10 @@ int main(int argc, char** argv) {
         lines = true, bytes = true, words = true;
     }
 
-    int f_i = 0;
+    int fsize = 0;
     while (true) {
-        File file = files[f_i];
-        ++f_i;
+        File file = files[fsize];
+        ++fsize;
         if (file.place) {
             break;
         }
