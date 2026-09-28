@@ -106,7 +106,7 @@ void FreeFiles(File* files) {
 }
 
 File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
-                bool* bytes, bool* words, bool* alnum, size_t* countFiles) {
+                bool* bytes, bool* words, bool* alnum) {
     size_t capacity = 4;
     File* files = (File*)malloc(capacity * sizeof(File));
     int fsize = 0;
@@ -189,7 +189,6 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
     }
 
     files[fsize] = File{};
-    *countFiles = fsize;
     return files;
 }
 
@@ -319,9 +318,8 @@ int main(int argc, char** argv) {
 
     bool lines = false, bytes = false, words = false, alnum = false;
     const char* err = "";
-    size_t countFiles = 0;
 
-    File* files = ParseArgs(argc, argv, &err, &lines, &bytes, &words, &alnum, &countFiles);
+    File* files = ParseArgs(argc, argv, &err, &lines, &bytes, &words, &alnum);
 
     if (strcmp(err, "") != 0) {
         std::cerr << err << '\n';
@@ -347,19 +345,15 @@ int main(int argc, char** argv) {
          */
 
         if (lines) {
-            // std::cout << "lines " << CountLines(&file, &err);
             std::cout << CountLines(&file, &err) << " ";
         }
         if (words) {
-            // std::cout << "words " << CountWords(&file, &err);
             std::cout << CountWords(&file, &err) << " ";
         }
         if (alnum) {
-            // std::cout << "alnum " << CountLatinsAndNumbers(&file, &err);
             std::cout << CountLatinsAndNumbers(&file, &err) << " ";
         }
         if (bytes) {
-            // std::cout << "bytes " << CountBytes(&file, &err);
             std::cout << CountBytes(&file, &err) << " ";
         }
 
