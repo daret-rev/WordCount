@@ -7,7 +7,7 @@
 const constexpr char* kArgError = "Invalid argument, use `-h` or `--help`";
 const constexpr char* kFileOpenError = "Failed to open file";
 const constexpr char* kReadFileError = "Failed to read file";
-const constexpr char* kRuntimeError = "Runtime error";
+// const constexpr char* kRuntimeError = "Runtime error";
 
 // Цвета для форматирования шрифта вывода
 struct Color {
@@ -74,7 +74,7 @@ public:
             capacity_ *= 2;
             const char** new_names = new const char*[capacity_];
 
-            for (int i = 0; i < size_; ++i) {
+            for (size_t i = 0; i < size_; ++i) {
                 // Предупреждение срабатывает потому что names указывает на память,
                 // не принадлежащую ему, argv.
                 // Но эта память остается валидной во время работы программы, поэтому опасности нет
@@ -90,12 +90,12 @@ public:
         ++size_;
     }
 
-    const char* Get(int i) const {
+    const char* Get(size_t i) const {
         // ReSharper disable once CppDFADeletedPointer
         return names_[i];
     }
 
-    int Len() const {
+    size_t Len() const {
         return size_;
     }
 
@@ -134,7 +134,7 @@ Slice ParseArgs(int argc, char** argv, const char** err, bool* lines,
                     return files;
                 }
             } else {
-                for (int j = 1; j < strlen(arg); ++j) {
+                for (size_t j = 1; j < strlen(arg); ++j) {
                     switch (arg[j]) {
                         case 'l': {
                             *lines = true;
@@ -193,56 +193,63 @@ void CountElements(std::ifstream* file, const char* name, const char** err, bool
     size_t alnum_c = 0;
 
     int c = 0;
-    while ((c = file->get()) != EOF) {
-        last_c = c;
-        if (lines) {
-            if (c == '\n') {
-                ++lines_c;
-            }
-        }
+    char buffer[65536];
+    while (file->read(buffer, sizeof(buffer)) || file->gcount() > 0) {
+        size_t bytes_count = static_cast<size_t>(file->gcount());
+
         // bytes
-        ++bytes_c;
+        bytes_c += bytes_count;
+        for (size_t i = 0; i < bytes_count; ++i) {
+            c = buffer[i];
+            last_c = c;
 
-        if (words) {
-            int t = false;
-            switch (c) {
-                case ' ': {
-                    t = true;
-                    break;
-                }
-                case '\t': {
-                    t = true;
-                    break;
-                }
-                case '\n': {
-                    t = true;
-                    break;
-                }
-                case '\r': {
-                    t = true;
-                    break;
-                }
-                case '\v': {
-                    t = true;
-                    break;
-                }
-                case '\f': {
-                    t = true;
-                    break;
-                }
-                default: {
-                    in_word = true;
+            if (lines) {
+                if (c == '\n') {
+                    ++lines_c;
                 }
             }
 
-            if (t && in_word) {
-                ++words_c;
-                in_word = false;
+            if (words) {
+                int t = false;
+                switch (c) {
+                    case ' ': {
+                        t = true;
+                        break;
+                    }
+                    case '\t': {
+                        t = true;
+                        break;
+                    }
+                    case '\n': {
+                        t = true;
+                        break;
+                    }
+                    case '\r': {
+                        t = true;
+                        break;
+                    }
+                    case '\v': {
+                        t = true;
+                        break;
+                    }
+                    case '\f': {
+                        t = true;
+                        break;
+                    }
+                    default: {
+                        in_word = true;
+                    }
+                }
+
+                if (t && in_word) {
+                    ++words_c;
+                    in_word = false;
+                }
             }
-        }
-        if (alnum) {
-            if (CheckLatinOrNumber(c)) {
-                ++alnum_c;
+            if (alnum) {
+                if (CheckLatinOrNumber(c)) {
+                    ++alnum_c;
+                }
             }
         }
     }
@@ -303,7 +310,7 @@ int main(int argc, char** argv) {
         lines = true, bytes = true, words = true;
     }
 
-    for (int i = 0; i < files.Len(); ++i) {
+    for (size_t i = 0; i < files.Len(); ++i) {
         const char* name = files.Get(i);
         std::ifstream file;
         file.open(name);
