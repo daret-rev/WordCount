@@ -1,6 +1,6 @@
 #include <cstring>
 #include <cstdio>
-#include <cstdlib>
+#include <fstream>
 #include <iostream>
 
 // Ошибки для обратной связи в консоли
@@ -56,93 +56,67 @@ void Help() {
     std::cout << Color::kReset;
 }
 
-struct File {
-    FILE* file;
-    const char* name = nullptr;
-    bool place = false;
+struct Slice {
+private:
+    const char** names_ = nullptr;
+    size_t size_ = 0;
+    size_t capacity_ = 0;
 
-    File(const char* name) {
-        file = fopen(name, "r");
-        // size_t len = strlen(name);
-        // name = new char[len+1];
-        this->name = name;
+public:
+
+    Slice(size_t cap) {
+        capacity_ = cap;
+        names_ = new const char*[capacity_];
     }
 
-    File() {
-        file = nullptr;
-        place = true;
-    }
+    void Append(const char* name) {
+        if (size_+1 >= capacity_) {
+            capacity_ *= 2;
+            const char** new_names = new const char*[capacity_];
 
-    bool IsOpen() const { return file != nullptr; }
-
-    void Close() const {
-        if (file != nullptr) {
-            fclose(file);
+            for (int i = 0; i < size_; ++i) {
+                // Предупреждение срабатывает потому что names указывает на память,
+                // не принадлежащую ему, argv.
+                // Но эта память остается валидной во время работы программы, поэтому опасности нет
+                // ReSharper disable once CppDFADeletedPointer
+                new_names[i] = names_[i];
+            }
+            // Мы очищаем массив сырых указателей, у них нет диструктора и argv не пострадает
+            // ReSharper disable once CppDFADeletedPointer
+            delete[] names_;
+            names_ = new_names;
         }
+        names_[size_] = name;
+        ++size_;
     }
 
-    void Clear() const {
-        if (file != nullptr) {
-            rewind(file);
-        }
+    const char* Get(int i) const {
+        // ReSharper disable once CppDFADeletedPointer
+        return names_[i];
+    }
+
+    int Len() const {
+        return size_;
+    }
+
+    ~Slice() {
+        delete[] names_;
     }
 };
 
-void FreeFiles(File* files) {
-    int f_i = 0;
-    if (files == nullptr) {
-        return;
-    }
-    while (true) {
-        File file = files[f_i];
-        ++f_i;
-        if (file.place) {
-            break;
-        }
-        file.Close();
-    }
-
-    free(files);
-}
-
-File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
-                bool* bytes, bool* words, bool* alnum) {
-    size_t capacity = 4;
-    File* files = (File*)malloc(capacity * sizeof(File));
-    int fsize = 0;
-    files[fsize] = File{};
+Slice ParseArgs(int argc, char** argv, const char** err, bool* lines,
+                bool* bytes, bool* words, bool* alnum, bool* help) {
+    Slice files{4};
     for (int i = 1; i < argc; ++i) {
         const char* arg = argv[i];
 
         if (strlen(arg) < 2) {
             *err = kArgError;
-            free(files);
-            return nullptr;
+            return files;
         }
 
         if (arg[0] != '-') {
-            File file{arg};
-            if (!file.IsOpen()) {
-                *err = kFileOpenError;
-                FreeFiles(files);
-                return nullptr;
-            }
-            files[fsize] = file;
-            ++fsize;
-            if (fsize >= capacity-1) {
-                capacity += 4;
-                File* new_files =
-                    (File*)realloc(files, capacity * sizeof(File));
-                if (new_files != nullptr) {
-                    files = new_files;
-                } else {
-                    *err = kRuntimeError;
-                    FreeFiles(files);
-                    // free(new_files);
-                    return nullptr;
-                }
-            }
-            files[fsize] = File{};
+            files.Append(arg);
         } else {
             if (arg[1] == '-') {
                 if (strcmp(arg, "--lines") == 0) {
@@ -153,10 +127,11 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
                     *words = true;
                 } else if (strcmp(arg, "--alnum") == 0) {
                     *alnum = true;
+                } else if (strcmp(arg, "--help") == 0) {
+                    *help = true;
                 } else {
                     *err = kArgError;
-                    FreeFiles(files);
-                    return nullptr;
+                    return files;
                 }
             } else {
                 for (int j = 1; j < strlen(arg); ++j) {
@@ -177,10 +152,13 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
                             *alnum = true;
                             break;
                         }
+                        case 'h': {
+                            *help = true;
+                            break;
+                        }
                         default: {
                             *err = kArgError;
-                            FreeFiles(files);
-                            return nullptr;
+                            return files;
                         }
                     }
                 }
@@ -188,76 +166,7 @@ File* ParseArgs(int argc, char** argv, const char** err, bool* lines,
         }
     }
 
-    files[fsize] = File{};
     return files;
-}
-
-size_t CountBytes(const File* file, const char** err) {
-    if (file->place || !file->IsOpen()) {
-        *err = kReadFileError;
-        return 0;
-    } file->Clear();
-
-    size_t size = 0;
-    char buffer[4096 * 2];
-
-    while (size_t read =
-               fread(buffer, sizeof(char), sizeof(buffer), file->file)) {
-        size += read;
-    }
-
-    if (ferror(file->file)) {
-        *err = kReadFileError;
-        return 0;
-    }
-
-    return size;
-}
-
-size_t CountWords(const File* file, const char** err) {
-    if (file->place || !file->IsOpen()) {
-        *err = kReadFileError;
-        return 0;
-    }
-    file->Clear();
-
-    size_t size = 0;
-
-    while (fscanf(file->file, "%*s") != EOF) {
-        ++size;
-    }
-
-    if (ferror(file->file)) {
-        *err = kReadFileError;
-        return 0;
-    }
-
-    return size;
-}
-
-size_t CountLines(const File* file, const char** err) {
-    if (file->place || !file->IsOpen()) {
-        *err = kReadFileError;
-        return 0;
-    }
-    file->Clear();
-
-    size_t size = 0;
-
-    int ch;
-    while ((ch = fgetc(file->file)) != EOF) {
-        while (ch != '\n' && ch != EOF) {
-            ch = fgetc(file->file);
-        }
-        ++size;
-    }
-
-    if (ferror(file->file)) {
-        *err = kReadFileError;
-        return 0;
-    }
-
-    return size;
 }
 
 inline bool CheckLatinOrNumber(const int ch) {
@@ -273,93 +182,142 @@ inline bool CheckLatinOrNumber(const int ch) {
     return false;
 }
 
-size_t CountLatinsAndNumbers(const File* file, const char** err) {
-    if (file->place || !file->IsOpen()) {
-        *err = kReadFileError;
-        return 0;
-    }
-    file->Clear();
-    
-    size_t size = 0;
+void CountElements(std::ifstream* file, const char* name, const char** err, bool lines,
+                bool bytes, bool words, bool alnum) {
 
-    int ch;
-    while ((ch = fgetc(file->file)) != EOF) {
-        if (CheckLatinOrNumber(ch)) {
-            ++size;
+    size_t lines_c = 0;
+    int last_c = 0;
+    size_t bytes_c = 0;
+    size_t words_c = 0;
+    bool in_word = false;
+    size_t alnum_c = 0;
+
+    int c = 0;
+    while ((c = file->get()) != EOF) {
+        last_c = c;
+        if (lines) {
+            if (c == '\n') {
+                ++lines_c;
+            }
         }
-        while (ch != '\n' && ch != EOF) {
-            ch = fgetc(file->file);
-            if (CheckLatinOrNumber(ch)) {
-                ++size;
+        // bytes
+        ++bytes_c;
+
+        if (words) {
+            int t = false;
+            switch (c) {
+                case ' ': {
+                    t = true;
+                    break;
+                }
+                case '\t': {
+                    t = true;
+                    break;
+                }
+                case '\n': {
+                    t = true;
+                    break;
+                }
+                case '\r': {
+                    t = true;
+                    break;
+                }
+                case '\v': {
+                    t = true;
+                    break;
+                }
+                case '\f': {
+                    t = true;
+                    break;
+                }
+                default: {
+                    in_word = true;
+                }
+            }
+
+            if (t && in_word) {
+                ++words_c;
+                in_word = false;
+            }
+        }
+        if (alnum) {
+            if (CheckLatinOrNumber(c)) {
+                ++alnum_c;
             }
         }
     }
 
-    if (ferror(file->file)) {
-        *err = kReadFileError;
-        return 0;
+    if (lines) {
+        if (last_c != 0 && last_c != '\n') {
+            ++lines_c;
+        }
     }
 
-    return size;
+    if (words && in_word) {
+        ++words_c;
+    }
+
+    if (file->bad()) {
+        *err = kReadFileError;
+        return;
+    }
+
+    if (lines) {
+        std::cout << lines_c << " ";
+    }
+    if (words) {
+        std::cout << words_c << " ";
+    }
+    if (alnum) {
+        std::cout << alnum_c << " ";
+    }
+    if (bytes) {
+        std::cout << bytes_c << " ";
+    }
+
+    std::cout << name << '\n';
 }
 
 int main(int argc, char** argv) {
-    // std::cout << "Labwork1!\n";
 
     if (argc < 2) {
         std::cerr << kArgError << '\n';
         return 1;
     }
 
-    if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
-        Help();
-        return 0;
+    bool lines = false, bytes = false, words = false, alnum = false, help = false;
+    const char* err = nullptr;
+
+    Slice files = ParseArgs(argc, argv, &err, &lines, &bytes, &words, &alnum, &help);
+
+    if (err != nullptr) {
+        std::cerr << err << '\n';
+        return 1;
     }
 
-    bool lines = false, bytes = false, words = false, alnum = false;
-    const char* err = "";
-
-    File* files = ParseArgs(argc, argv, &err, &lines, &bytes, &words, &alnum);
-
-    if (strcmp(err, "") != 0) {
-        std::cerr << err << '\n';
-        FreeFiles(files);
-        return 1;
+    if (help) {
+        Help();
     }
 
     if (lines == false && bytes == false && words == false && alnum == false) {
         lines = true, bytes = true, words = true;
     }
 
-    int fsize = 0;
-    while (true) {
-        File file = files[fsize];
-        ++fsize;
-        if (file.place) {
-            break;
+    for (int i = 0; i < files.Len(); ++i) {
+        const char* name = files.Get(i);
+        std::ifstream file;
+        file.open(name);
+        if (!file.is_open()) {
+            std::cerr << kFileOpenError << '\n';
+            return 1;
         }
+        CountElements(&file, name, &err, lines, bytes, words, alnum);
 
-        /*
-         * Порядок вывода:
-         * <lines> <words> <alnum> <bytes> <filename>
-         */
-
-        if (lines) {
-            std::cout << CountLines(&file, &err) << " ";
+        if (err != nullptr) {
+            std::cerr << err << '\n';
+            return 1;
         }
-        if (words) {
-            std::cout << CountWords(&file, &err) << " ";
-        }
-        if (alnum) {
-            std::cout << CountLatinsAndNumbers(&file, &err) << " ";
-        }
-        if (bytes) {
-            std::cout << CountBytes(&file, &err) << " ";
-        }
-
-        std::cout << file.name << '\n';
     }
 
-    FreeFiles(files);
     return 0;
 }
