@@ -56,6 +56,31 @@ void Help() {
     std::cout << Color::kReset;
 }
 
+char indexing_table[256]{0};
+void InitTable() {
+    // Латиница и цифры
+    for (int i = '0'; i <= '9'; ++i) {
+        indexing_table[i] |= 1;
+    }
+    for (int i = 'a'; i <= 'z'; ++i) {
+        indexing_table[i] |= 1;
+    }
+    for (int i = 'A'; i <= 'Z'; ++i) {
+        indexing_table[i] |= 1;
+    }
+
+    // Строки
+    indexing_table['\n'] |= 2;
+
+    // Пустоты
+    indexing_table[' '] |= 4;
+    indexing_table['\n'] |= 4;
+    indexing_table['\t'] |= 4;
+    indexing_table['\r'] |= 4;
+    indexing_table['\v'] |= 4;
+    indexing_table['\f'] |= 4;
+}
+
 struct Slice {
 private:
     const char** names_ = nullptr;
@@ -185,14 +210,15 @@ inline bool CheckLatinOrNumber(const int ch) {
 void CountElements(std::ifstream* file, const char* name, const char** err, bool lines,
                 bool bytes, bool words, bool alnum) {
 
+    unsigned char mask = 0;
+    // Чтоб не было ложного срабатывания на слова и \n
+    unsigned char last_mask = 6;
     size_t lines_c = 0;
-    int last_c = 0;
     size_t bytes_c = 0;
     size_t words_c = 0;
-    bool in_word = false;
     size_t alnum_c = 0;
 
-    int c = 0;
+    unsigned char c = 0;
     char buffer[65536];
     while (file->read(buffer, sizeof(buffer)) || file->gcount() > 0) {
         size_t bytes_count = static_cast<size_t>(file->gcount());
@@ -201,68 +227,18 @@ void CountElements(std::ifstream* file, const char* name, const char** err, bool
         bytes_c += bytes_count;
         for (size_t i = 0; i < bytes_count; ++i) {
             c = buffer[i];
-            last_c = c;
+            mask = indexing_table[c];
 
-            if (lines) {
-                if (c == '\n') {
-                    ++lines_c;
-                }
-            }
-
-            if (words) {
-                int t = false;
-                switch (c) {
-                    case ' ': {
-                        t = true;
-                        break;
-                    }
-                    case '\t': {
-                        t = true;
-                        break;
-                    }
-                    case '\n': {
-                        t = true;
-                        break;
-                    }
-                    case '\r': {
-                        t = true;
-                        break;
-                    }
-                    case '\v': {
-                        t = true;
-                        break;
-                    }
-                    case '\f': {
-                        t = true;
-                        break;
-                    }
-                    default: {
-                        in_word = true;
-                    }
-                }
-
-                if (t && in_word) {
-                    ++words_c;
-                    in_word = false;
-                }
-            }
-            if (alnum) {
-                if (CheckLatinOrNumber(c)) {
-                    ++alnum_c;
-                }
-            }
+            lines_c += ((mask & 2) >> 1);
+            alnum_c += (mask & 1);
+            words_c += ((mask & 4) >> 2) & !((last_mask & 4) >> 2);
+            last_mask = mask;
         }
     }
 
-    if (lines) {
-        if (last_c != 0 && last_c != '\n') {
-            ++lines_c;
-        }
-    }
+    lines_c += !(last_mask & 2);
+    words_c += !(last_mask & 4);
 
-    if (words && in_word) {
-        ++words_c;
-    }
 
     if (file->bad()) {
         *err = kReadFileError;
@@ -301,6 +277,8 @@ int main(int argc, char** argv) {
         std::cerr << err << '\n';
         return 1;
     }
+
+    InitTable();
 
     if (help) {
         Help();

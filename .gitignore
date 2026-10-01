@@ -71,3 +71,4 @@ Testing/
 main  
 main_backup.cpp
 build/
+.tests
