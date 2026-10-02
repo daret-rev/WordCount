@@ -2,12 +2,14 @@
 #include <cstdio>
 #include <fstream>
 #include <iostream>
+#include <thread>
 
 // Ошибки для обратной связи в консоли
 const constexpr char* kArgError = "Invalid argument, use `-h` or `--help`";
 const constexpr char* kFileOpenError = "Failed to open file";
 const constexpr char* kReadFileError = "Failed to read file";
-// const constexpr char* kRuntimeError = "Runtime error";
+const constexpr char* kRuntimeError = "Runtime error";
+const constexpr char* kUnresolveError = "Unresolve error";
 
 // Цвета для форматирования шрифта вывода
 struct Color {
@@ -84,6 +86,11 @@ void InitTable() {
 struct Slice {
 private:
     const char** names_ = nullptr;
+    size_t* bytes_ = nullptr;
+    size_t* lines_ = nullptr;
+    size_t* words_ = nullptr;
+    size_t* alnums_ = nullptr;
+    int* errors_ = nullptr;
     size_t size_ = 0;
     size_t capacity_ = 0;
 
@@ -92,6 +99,11 @@ public:
     Slice(size_t cap) {
         capacity_ = cap;
         names_ = new const char*[capacity_];
+        bytes_ = new size_t[capacity_];
+        lines_ = new size_t[capacity_];
+        words_ = new size_t[capacity_];
+        alnums_ = new size_t[capacity_];
+        errors_ = new int[capacity_];
     }
 
     void Append(const char* name) {
@@ -110,6 +122,17 @@ public:
             // ReSharper disable once CppDFADeletedPointer
             delete[] names_;
             names_ = new_names;
+
+            delete[] bytes_;
+            delete[] lines_;
+            delete[] words_;
+            delete[] alnums_;
+            delete[] errors_;
+            bytes_ = new size_t[capacity_];
+            lines_ = new size_t[capacity_];
+            words_ = new size_t[capacity_];
+            alnums_ = new size_t[capacity_];
+            errors_ = new int[capacity_];
         }
         names_[size_] = name;
         ++size_;
@@ -124,8 +147,64 @@ public:
         return size_;
     }
 
+    size_t* GetBytes(size_t i) const {
+        return &bytes_[i];
+    }
+    size_t* GetLines(size_t i) const {
+        return &lines_[i];
+    }
+    size_t* GetWords(size_t i) const {
+        return &words_[i];
+    }
+    size_t* GetAlnums(size_t i) const {
+        return &alnums_[i];
+    }
+
+    void SetError(size_t i, int error) const {
+        errors_[i] = error;
+    }
+
+    void PrintResult(size_t i,
+        bool lines, bool bytes, bool words, bool alnums) const {
+        if (!errors_[i]) {
+            if (lines) {
+                std::cout << lines_[i] << " ";
+            }
+            if (words) {
+                std::cout << words_[i] << " ";
+            }
+            if (alnums) {
+                std::cout << alnums_[i] << " ";
+            }
+            if (bytes) {
+                std::cout << bytes_[i] << " ";
+            }
+        } else {
+            switch (errors_[i]) {
+                case -1: {
+                    std::cerr << kFileOpenError << '\n';
+                    break;
+                }
+                case -2: {
+                    std::cerr << kRuntimeError << ": ";
+                    break;
+                }
+                default: {
+                    std::cerr << kUnresolveError << ": ";
+                }
+            }
+        }
+
+        std::cout << names_[i] << '\n';
+    }
+
     ~Slice() {
         delete[] names_;
+        delete[] bytes_;
+        delete[] lines_;
+        delete[] words_;
+        delete[] alnums_;
+        delete[] errors_;
     }
 };
 
@@ -194,21 +273,7 @@ Slice ParseArgs(int argc, char** argv, const char** err, bool* lines,
     return files;
 }
 
-inline bool CheckLatinOrNumber(const int ch) {
-    if ('A' <= ch && ch <= 'Z') {
-        return true;
-    }
-    if ('a' <= ch && ch <= 'z') {
-        return true;
-    }
-    if ('0' <= ch && ch <= '9') {
-        return true;
-    }
-    return false;
-}
-
-void CountElements(std::ifstream* file, const char* name, const char** err, bool lines,
-                bool bytes, bool words, bool alnum) {
+void CountElements(std::ifstream* file, int* err, size_t* byte, size_t* line, size_t* word, size_t* alnum) {
 
     unsigned char mask = 0;
     // Чтоб не было ложного срабатывания на слова и \n
@@ -241,24 +306,14 @@ void CountElements(std::ifstream* file, const char* name, const char** err, bool
 
 
     if (file->bad()) {
-        *err = kReadFileError;
+        *err = -2;
         return;
     }
 
-    if (lines) {
-        std::cout << lines_c << " ";
-    }
-    if (words) {
-        std::cout << words_c << " ";
-    }
-    if (alnum) {
-        std::cout << alnum_c << " ";
-    }
-    if (bytes) {
-        std::cout << bytes_c << " ";
-    }
-
-    std::cout << name << '\n';
+    *byte = bytes_c;
+    *line = lines_c;
+    *word = words_c;
+    *alnum = alnum_c;
 }
 
 int main(int argc, char** argv) {
@@ -288,20 +343,37 @@ int main(int argc, char** argv) {
         lines = true, bytes = true, words = true;
     }
 
-    for (size_t i = 0; i < files.Len(); ++i) {
-        const char* name = files.Get(i);
-        std::ifstream file;
-        file.open(name);
-        if (!file.is_open()) {
-            std::cerr << kFileOpenError << '\n';
-            return 1;
-        }
-        CountElements(&file, name, &err, lines, bytes, words, alnum);
+    std::atomic<bool> error{false};
+    std::jthread* jthreads = new std::jthread[files.Len()];
 
-        if (err != nullptr) {
-            std::cerr << err << '\n';
-            return 1;
-        }
+    for (size_t i = 0; i < files.Len(); ++i) {
+        jthreads[i] = std::jthread([&files, &error, i] {
+            const char* name = files.Get(i);
+            std::ifstream file;
+            file.open(name);
+            if (!file.is_open()) {
+                files.SetError(i, -1);
+                error.store(true);
+                return;
+            }
+            int runtime_error = 0;
+            CountElements(&file, &runtime_error,
+                files.GetBytes(i), files.GetLines(i), files.GetWords(i), files.GetAlnums(i));
+            files.SetError(i, runtime_error);
+            if (runtime_error) {
+                error.store(true);
+            }
+        });
+    }
+
+    delete[] jthreads;
+
+    for (size_t i = 0; i < files.Len(); ++i) {
+        files.PrintResult(i, lines, bytes, words, alnum);
+    }
+
+    if (error.load()) {
+        return 1;
     }
 
     return 0;
