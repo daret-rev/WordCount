@@ -1,8 +1,10 @@
 #include <cstring>
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include <atomic>
 
 // Ошибки для обратной связи в консоли
 const constexpr char* kArgError = "Invalid argument, use `-h` or `--help`";
@@ -182,15 +184,15 @@ public:
         } else {
             switch (errors_[i]) {
                 case -1: {
-                    std::cerr << kFileOpenError << '\n';
+                    std::cerr << Color::kRed << kFileOpenError << ": " << Color::kReset;
                     break;
                 }
                 case -2: {
-                    std::cerr << kRuntimeError << ": ";
+                    std::cerr << Color::kRed << kRuntimeError << ": " << Color::kReset;
                     break;
                 }
                 default: {
-                    std::cerr << kUnresolveError << ": ";
+                    std::cerr << Color::kRed << kUnresolveError << ": " << Color::kReset;
                 }
             }
         }
@@ -316,6 +318,130 @@ void CountElements(std::ifstream* file, int* err, size_t* byte, size_t* line, si
     *alnum = alnum_c;
 }
 
+struct ThreadScope {
+private:
+    std::jthread* jthreads_ = nullptr;
+    size_t cores_ = 0;
+
+    // Флаги состояния потоков
+    std::atomic<uint64_t>* task_flags_ = nullptr;
+    std::atomic<bool>* init_flags_ = nullptr;
+    std::atomic<bool>* stop_flags_ = nullptr;
+
+    // Список для передачи задач
+    void** tasks_ = nullptr;
+    // Счетчик задач
+    std::atomic<size_t> task_counter_{0};
+
+public:
+    ThreadScope(size_t n) {
+        unsigned int cores = std::thread::hardware_concurrency();
+        if (cores == 0) {
+            jthreads_= new std::jthread[4];
+            task_flags_ = new std::atomic<uint64_t>[4]{0};
+            init_flags_ = new std::atomic<bool>[4]{false};
+            stop_flags_ = new std::atomic<bool>[4]{false};
+            tasks_ = new void*[4];
+            cores_ = 4;
+        }
+        else if (cores >= n)
+            {
+            jthreads_= new std::jthread[n];
+            task_flags_ = new std::atomic<uint64_t>[n]{0};
+            init_flags_ = new std::atomic<bool>[n]{false};
+            stop_flags_ = new std::atomic<bool>[n]{false};
+            tasks_ = new void*[n];
+            cores_ = n;
+        }
+        else
+            {
+            cores_ = cores;
+            jthreads_= new std::jthread[cores_];
+            task_flags_ = new std::atomic<uint64_t>[cores_]{0};
+            init_flags_ = new std::atomic<bool>[cores_]{false};
+            stop_flags_ = new std::atomic<bool>[cores_]{false};
+            tasks_ = new void*[cores_];
+        }
+    }
+
+    template <typename F>
+    void Push(F* lambda) {
+        ++task_counter_;
+        while (true) {
+            for (int i = 0; i < cores_; ++i) {
+                bool expected = false;
+                if (init_flags_[i].compare_exchange_strong(expected, true)) {
+                    // Если тред еще не был инициализирован, создаем
+                    tasks_[i] = static_cast<void*>(lambda);
+                    task_flags_[i].store(2);
+                    jthreads_[i] = std::jthread([this, i] {
+                        while (true) {
+                            while (task_flags_[i].load() == 0) {
+                                if (stop_flags_[i].load()) {
+                                    return;
+                                }
+                                std::this_thread::yield();
+                            }
+
+                            while (task_flags_[i].load() != 2) {
+                                if (stop_flags_[i].load()) {
+                                    return;
+                                }
+                                std::this_thread::yield();
+                            }
+
+                            (*static_cast<F*>(tasks_[i]))();   // Вызвали задачу
+                            delete static_cast<F*>(tasks_[i]); // Удалили задачу
+                            --task_counter_;
+                            task_flags_[i].store(0);
+                        }
+                    });
+
+                    return;
+                }
+                uint64_t exp = 0;
+                if (task_flags_[i].compare_exchange_strong(exp, 1)) {
+                    // Если тред существует, кладем ему таску и выставляем флаг
+                    tasks_[i] = static_cast<void*>(lambda);
+                    task_flags_[i].store(2);
+                    return;
+                }
+            }
+            std::this_thread::yield();
+        }
+    }
+
+    void Done() const {
+        while (task_counter_.load()) {
+            if (task_counter_.load() < cores_) {
+                for (int i = 0; i < cores_; ++i) {
+                    if (!task_flags_[i].load()) {
+                        stop_flags_[i].store(true);
+                        if (jthreads_[i].joinable()) {
+                            jthreads_[i].join();
+                        }
+                    }
+                }
+            }
+            std::this_thread::yield();
+        }
+    }
+
+    ~ThreadScope() {
+        for (size_t i = 0; i < cores_; ++i) {
+            while (task_flags_[i].load()) {
+                std::this_thread::yield();
+            }
+            stop_flags_[i].store(true);
+        }
+        delete[] jthreads_;
+        delete[] task_flags_;
+        delete[] init_flags_;
+        delete[] stop_flags_;
+        delete[] tasks_;
+    }
+};
+
 int main(int argc, char** argv) {
 
     if (argc < 2) {
@@ -343,37 +469,65 @@ int main(int argc, char** argv) {
         lines = true, bytes = true, words = true;
     }
 
-    std::atomic<bool> error{false};
-    std::jthread* jthreads = new std::jthread[files.Len()];
+    size_t n = files.Len();
+    if (n > 1) {
+        std::atomic<bool> error{false};
+        ThreadScope scope(n);
+        for (size_t i = 0; i < n; ++i) {
+            auto lambda_local = [&files, &error, i] {
+                const char* name = files.Get(i);
+                std::ifstream file;
+                file.open(name);
+                if (!file.is_open()) {
+                    files.SetError(i, -1);
+                    error.store(true);
+                    return;
+                }
+                int runtime_error = 0;
+                CountElements(&file, &runtime_error,
+                    files.GetBytes(i), files.GetLines(i), files.GetWords(i), files.GetAlnums(i));
+                files.SetError(i, runtime_error);
+                if (runtime_error) {
+                    error.store(true);
+                }
+            };
 
-    for (size_t i = 0; i < files.Len(); ++i) {
-        jthreads[i] = std::jthread([&files, &error, i] {
-            const char* name = files.Get(i);
-            std::ifstream file;
-            file.open(name);
-            if (!file.is_open()) {
-                files.SetError(i, -1);
-                error.store(true);
-                return;
-            }
-            int runtime_error = 0;
-            CountElements(&file, &runtime_error,
-                files.GetBytes(i), files.GetLines(i), files.GetWords(i), files.GetAlnums(i));
-            files.SetError(i, runtime_error);
-            if (runtime_error) {
-                error.store(true);
-            }
-        });
+            auto* lambda = new auto(lambda_local);
+            scope.Push(lambda);
+        }
+
+        scope.Done();
+
+        for (size_t i = 0; i < files.Len(); ++i) {
+            files.PrintResult(i, lines, bytes, words, alnum);
+        }
+
+        if (error.load()) {
+            return 1;
+        }
+
+        return 0;
     }
 
-    delete[] jthreads;
+    if (files.Len() == 1) {
+        const char* name = files.Get(0);
+        std::ifstream file;
+        file.open(name);
+        if (!file.is_open()) {
+            files.SetError(0, -1);
+            files.PrintResult(0, lines, bytes, words, alnum);
+            return 1;
+        }
+        int runtime_error = 0;
+        CountElements(&file, &runtime_error,
+            files.GetBytes(0), files.GetLines(0), files.GetWords(0), files.GetAlnums(0));
+        files.SetError(0, runtime_error);
+        files.PrintResult(0, lines, bytes, words, alnum);
+        if (runtime_error) {
+            return 1;
+        }
 
-    for (size_t i = 0; i < files.Len(); ++i) {
-        files.PrintResult(i, lines, bytes, words, alnum);
-    }
-
-    if (error.load()) {
-        return 1;
+        return 0;
     }
 
     return 0;
