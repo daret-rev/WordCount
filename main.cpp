@@ -1,19 +1,24 @@
 #include <cstring>
-#include <cstdint>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <thread>
 #include <atomic>
 
-// Ошибки для обратной связи в консоли
+/// Ошибки для обратной связи в консоли
 const constexpr char* kArgError = "Invalid argument, use `-h` or `--help`";
 const constexpr char* kFileOpenError = "Failed to open file";
-const constexpr char* kReadFileError = "Failed to read file";
+// const constexpr char* kReadFileError = "Failed to read file";
 const constexpr char* kRuntimeError = "Runtime error";
 const constexpr char* kUnresolveError = "Unresolve error";
 
-// Цвета для форматирования шрифта вывода
+enum class Errors : char {
+    kFree = 0,
+    kOpenFile = -1,
+    kRuntime = -2,
+};
+
+/// Цвета для форматирования шрифта вывода
 struct Color {
     static constexpr const char* kReset = "\033[0m";
     static constexpr const char* kRed = "\033[31m";
@@ -24,7 +29,7 @@ struct Color {
     static constexpr const char* kCyan = "\033[36m";
 };
 
-// Метод помошник - для ознакомления с синтаксисом утилиты
+/// Метод помошник - для ознакомления с синтаксисом утилиты
 void Help() {
     std::cout << Color::kCyan << "Use syntax:\n\n" << Color::kMagenta;
 
@@ -60,7 +65,12 @@ void Help() {
     std::cout << Color::kReset;
 }
 
-char indexing_table[256]{0};
+constexpr unsigned char kDefaultLastMask = 6;
+unsigned char indexing_table[256]{0};
+
+/// Для оптимизации кода: минимизации сравнений и проверок,
+/// используется битовая арифметика. Биты выставлены в таблице,
+/// где ключом является символы из ascii таблицы
 void InitTable() {
     // Латиница и цифры
     for (int i = '0'; i <= '9'; ++i) {
@@ -92,7 +102,7 @@ private:
     size_t* lines_ = nullptr;
     size_t* words_ = nullptr;
     size_t* alnums_ = nullptr;
-    int* errors_ = nullptr;
+    Errors* errors_ = nullptr;
     size_t size_ = 0;
     size_t capacity_ = 0;
 
@@ -105,7 +115,7 @@ public:
         lines_ = new size_t[capacity_];
         words_ = new size_t[capacity_];
         alnums_ = new size_t[capacity_];
-        errors_ = new int[capacity_];
+        errors_ = new Errors[capacity_];
     }
 
     void Append(const char* name) {
@@ -134,7 +144,7 @@ public:
             lines_ = new size_t[capacity_];
             words_ = new size_t[capacity_];
             alnums_ = new size_t[capacity_];
-            errors_ = new int[capacity_];
+            errors_ = new Errors[capacity_];
         }
         names_[size_] = name;
         ++size_;
@@ -162,13 +172,13 @@ public:
         return &alnums_[i];
     }
 
-    void SetError(size_t i, int error) const {
+    void SetError(size_t i, Errors error) const {
         errors_[i] = error;
     }
 
     void PrintResult(size_t i,
         bool lines, bool bytes, bool words, bool alnums) const {
-        if (!errors_[i]) {
+        if (!static_cast<char>(errors_[i])) {
             if (lines) {
                 std::cout << lines_[i] << " ";
             }
@@ -183,11 +193,11 @@ public:
             }
         } else {
             switch (errors_[i]) {
-                case -1: {
+                case Errors::kOpenFile: {
                     std::cerr << Color::kRed << kFileOpenError << ": " << Color::kReset;
                     break;
                 }
-                case -2: {
+                case Errors::kRuntime: {
                     std::cerr << Color::kRed << kRuntimeError << ": " << Color::kReset;
                     break;
                 }
@@ -201,12 +211,132 @@ public:
     }
 
     ~Slice() {
+        // ReSharper disable once CppDFADeletedPointer
         delete[] names_;
+        // ReSharper disable once CppDFADeletedPointer
         delete[] bytes_;
+        // ReSharper disable once CppDFADeletedPointer
         delete[] lines_;
+        // ReSharper disable once CppDFADeletedPointer
         delete[] words_;
+        // ReSharper disable once CppDFADeletedPointer
         delete[] alnums_;
         delete[] errors_;
+    }
+
+    // Переопределяем копирование
+    Slice(const Slice& other) {
+        this->capacity_ = other.capacity_;
+        this->size_ = other.size_;
+
+        this->names_ = new const char*[capacity_];
+        this->bytes_ = new size_t[capacity_];
+        this->lines_ = new size_t[capacity_];
+        this->words_ = new size_t[capacity_];
+        this->alnums_ = new size_t[capacity_];
+        this->errors_ = new Errors[capacity_];
+        // ReSharper disable once CppDFAConstantConditions
+        // ReSharper disable CppDFAUnreachableCode
+        for (size_t i = 0; i < this->size_; ++i) {
+            // ReSharper disable CppDFANullDereference
+            this->names_[i] = other.names_[i];
+            this->bytes_[i] = other.bytes_[i];
+            this->lines_[i] = other.lines_[i];
+            this->words_[i] = other.words_[i];
+            this->alnums_[i] = other.alnums_[i];
+            this->errors_[i] = other.errors_[i];
+            // ReSharper restore CppDFANullDereference
+        }
+        // ReSharper restore CppDFAUnreachableCode
+    }
+    Slice& operator=(const Slice& other) {
+        if (this == &other) {
+            return *this;
+        }
+
+        this->capacity_ = other.capacity_;
+        this->size_ = other.size_;
+
+        delete[] this->names_;
+        delete[] this->bytes_;
+        delete[] this->lines_;
+        delete[] this->words_;
+        delete[] this->alnums_;
+        delete[] this->errors_;
+
+        this->names_ = new const char*[capacity_];
+        this->bytes_ = new size_t[capacity_];
+        this->lines_ = new size_t[capacity_];
+        this->words_ = new size_t[capacity_];
+        this->alnums_ = new size_t[capacity_];
+        this->errors_ = new Errors[capacity_];
+        // ReSharper disable once CppDFAConstantConditions
+        // ReSharper disable CppDFAUnreachableCode
+        for (size_t i = 0; i < this->size_; ++i) {
+            this->names_[i] = other.names_[i];
+            this->bytes_[i] = other.bytes_[i];
+            this->lines_[i] = other.lines_[i];
+            this->words_[i] = other.words_[i];
+            this->alnums_[i] = other.alnums_[i];
+            this->errors_[i] = other.errors_[i];
+        }
+        // ReSharper restore CppDFAUnreachableCode
+        return *this;
+    }
+
+    // Переопределяем перемещение
+    Slice(Slice&& other) noexcept {
+        this->capacity_ = other.capacity_;
+        this->size_ = other.size_;
+
+        this->names_ = other.names_;
+        this->bytes_ = other.bytes_;
+        this->lines_ = other.lines_;
+        this->words_ = other.words_;
+        this->alnums_ = other.alnums_;
+        this->errors_ = other.errors_;
+
+        other.capacity_ = 0;
+        other.size_ = 0;
+        other.names_ = nullptr;
+        other.bytes_ = nullptr;
+        other.lines_ = nullptr;
+        other.words_ = nullptr;
+        other.alnums_ = nullptr;
+        other.errors_ = nullptr;
+    }
+    Slice& operator=(Slice&& other) noexcept {
+        if (this == &other) {
+            return *this;
+        }
+
+        this->capacity_ = other.capacity_;
+        this->size_ = other.size_;
+
+        delete[] this->names_;
+        delete[] this->bytes_;
+        delete[] this->lines_;
+        delete[] this->words_;
+        delete[] this->alnums_;
+        delete[] this->errors_;
+
+        this->names_ = other.names_;
+        this->bytes_ = other.bytes_;
+        this->lines_ = other.lines_;
+        this->words_ = other.words_;
+        this->alnums_ = other.alnums_;
+        this->errors_ = other.errors_;
+
+        other.capacity_ = 0;
+        other.size_ = 0;
+        other.names_ = nullptr;
+        other.bytes_ = nullptr;
+        other.lines_ = nullptr;
+        other.words_ = nullptr;
+        other.alnums_ = nullptr;
+        other.errors_ = nullptr;
+
+        return *this;
     }
 };
 
@@ -275,11 +405,11 @@ Slice ParseArgs(int argc, char** argv, const char** err, bool* lines,
     return files;
 }
 
-void CountElements(std::ifstream* file, int* err, size_t* byte, size_t* line, size_t* word, size_t* alnum) {
+void CountElements(std::ifstream* file, Errors* err, size_t* byte, size_t* line, size_t* word, size_t* alnum) {
 
     unsigned char mask = 0;
     // Чтоб не было ложного срабатывания на слова и \n
-    unsigned char last_mask = 6;
+    unsigned char last_mask = kDefaultLastMask;
     size_t lines_c = 0;
     size_t bytes_c = 0;
     size_t words_c = 0;
@@ -290,25 +420,45 @@ void CountElements(std::ifstream* file, int* err, size_t* byte, size_t* line, si
     while (file->read(buffer, sizeof(buffer)) || file->gcount() > 0) {
         size_t bytes_count = static_cast<size_t>(file->gcount());
 
-        // bytes
+        // bytes: увеличиваем счетчик байт по количеству считаного в буфер
         bytes_c += bytes_count;
         for (size_t i = 0; i < bytes_count; ++i) {
-            c = buffer[i];
+            // Получаем битовую маску по символу из файла
+            c = static_cast<unsigned char>(buffer[i]);
             mask = indexing_table[c];
 
+            // Если символ был \n, то выражение 1, иначе - 0
             lines_c += ((mask & 2) >> 1);
+            // Если символ был латинским или цифрой, то  =1, иначе =0
             alnum_c += (mask & 1);
+            /* Если текущий символ `пробельный`,
+             * а предидущий не `пробельный`,
+             * то =1, иначе =0 */
             words_c += ((mask & 4) >> 2) & !((last_mask & 4) >> 2);
             last_mask = mask;
         }
     }
 
+    // Если последний символ был не переносом строки, то увеличиваем счетчик строк
     lines_c += !(last_mask & 2);
+    // Если последний симаол был не `пробельным`, то это слово
     words_c += !(last_mask & 4);
 
 
-    if (file->bad()) {
-        *err = -2;
+    /// Проверяем состояяние файла по маске.
+    /// Смотрим только на состояние bad, fail и eof.
+    /// Ошибка есть если состояние bad или fail(но без eof)
+    std::ios_base::iostate s = file->rdstate() & (std::ios_base::badbit|std::ios_base::failbit|std::ios_base::eofbit);
+    if (
+        (s & std::ios_base::badbit) |
+        !((s & (std::ios_base::failbit|std::ios_base::eofbit)) ^ std::ios_base::failbit)
+    ) {
+        *err = Errors::kRuntime;
+        return;
+    }
+
+    if (file->bad() || (file->fail() && !file->eof())) {
+        *err = Errors::kRuntime;
         return;
     }
 
@@ -320,13 +470,33 @@ void CountElements(std::ifstream* file, int* err, size_t* byte, size_t* line, si
 
 struct ThreadScope {
 private:
+    // Пул потоков для распределения задач
     std::jthread* jthreads_ = nullptr;
+    // Количество доступных ядер
     size_t cores_ = 0;
+    // Счетчик жизней, нужен для этапа завершения жизни пула
+    size_t live_cores_ = 0;
+    // Метка говорит что пул уничтожается
+    std::atomic<bool> death_ = false;
+
+    enum class TaskState : char {
+        // Жизненый цикл выполнени задач потоками
+        kFree = 0,
+        kInitializing = 1,
+        kWork = 2,
+        kDeath = 3,
+    };
+    enum class InitState : char {
+        // Состояние создания потока
+        kNoninitialized = 0,
+        kInitializing = 1,
+        kInitialized = 2,
+        kDeath = 3,
+    };
 
     // Флаги состояния потоков
-    std::atomic<uint64_t>* task_flags_ = nullptr;
-    std::atomic<bool>* init_flags_ = nullptr;
-    std::atomic<bool>* stop_flags_ = nullptr;
+    std::atomic<TaskState>* task_flags_ = nullptr;
+    std::atomic<InitState>* init_flags_ = nullptr;
 
     // Список для передачи задач
     void** tasks_ = nullptr;
@@ -335,112 +505,128 @@ private:
 
 public:
     ThreadScope(size_t n) {
+        // Пытаемся узнать число доступных потоков
         unsigned int cores = std::thread::hardware_concurrency();
         if (cores == 0) {
-            jthreads_= new std::jthread[4];
-            task_flags_ = new std::atomic<uint64_t>[4]{0};
-            init_flags_ = new std::atomic<bool>[4]{false};
-            stop_flags_ = new std::atomic<bool>[4]{false};
-            tasks_ = new void*[4];
-            cores_ = 4;
-        }
-        else if (cores >= n)
-            {
-            jthreads_= new std::jthread[n];
-            task_flags_ = new std::atomic<uint64_t>[n]{0};
-            init_flags_ = new std::atomic<bool>[n]{false};
-            stop_flags_ = new std::atomic<bool>[n]{false};
-            tasks_ = new void*[n];
+            // Если не распозняли окружение, ставим дефолт для экономии
+            cores_ = 2;
+        } else if (cores >= n) {
             cores_ = n;
-        }
-        else
-            {
+        } else {
             cores_ = cores;
-            jthreads_= new std::jthread[cores_];
-            task_flags_ = new std::atomic<uint64_t>[cores_]{0};
-            init_flags_ = new std::atomic<bool>[cores_]{false};
-            stop_flags_ = new std::atomic<bool>[cores_]{false};
-            tasks_ = new void*[cores_];
         }
+        live_cores_ = cores_;
+        jthreads_= new std::jthread[cores_];
+        task_flags_ = new std::atomic<TaskState>[cores_]{TaskState::kFree};
+        init_flags_ = new std::atomic<InitState>[cores_]{InitState::kNoninitialized};
+        tasks_ = new void*[cores_];
     }
 
     template <typename F>
     void Push(F* lambda) {
+        if (death_.load()) {
+            delete lambda;
+            return;
+        }
         ++task_counter_;
+        // ReSharper disable once CppJoinDeclarationAndAssignment
+        size_t task_count;
         while (true) {
-            for (int i = 0; i < cores_; ++i) {
-                bool expected = false;
-                if (init_flags_[i].compare_exchange_strong(expected, true)) {
+            task_count = task_counter_.load();
+            for (size_t i = 0; i < cores_; ++i) {
+                InitState expected = InitState::kNoninitialized;
+                if (init_flags_[i].compare_exchange_strong(expected, InitState::kInitializing)) {
                     // Если тред еще не был инициализирован, создаем
                     tasks_[i] = static_cast<void*>(lambda);
-                    task_flags_[i].store(2);
+                    task_flags_[i].store(TaskState::kWork);
                     jthreads_[i] = std::jthread([this, i] {
+                        // Создаем в потоке бесконечное исполнение со своим жизниным циклом
                         while (true) {
-                            while (task_flags_[i].load() == 0) {
-                                if (stop_flags_[i].load()) {
-                                    return;
-                                }
-                                std::this_thread::yield();
+                            // Если поток пуст, он ждет назначения задачи
+                            if (task_flags_[i].load() == TaskState::kFree) {
+                                task_flags_[i].wait(TaskState::kFree);
                             }
 
-                            while (task_flags_[i].load() != 2) {
-                                if (stop_flags_[i].load()) {
-                                    return;
-                                }
-                                std::this_thread::yield();
+                            // Когда задача появилась, он ждет инициализации задачи
+                            if (task_flags_[i].load() == TaskState::kInitializing) {
+                                task_flags_[i].wait(TaskState::kInitializing);
                             }
 
-                            (*static_cast<F*>(tasks_[i]))();   // Вызвали задачу
+                            if (task_flags_[i].load() == TaskState::kDeath) {
+                                init_flags_[i].store(InitState::kDeath);
+                                return;
+                            }
+
+                            // Выполняем задачу и очизаем ресурсы
+                            (*static_cast<F*>(tasks_[i]))();// Вызвали задачу
                             delete static_cast<F*>(tasks_[i]); // Удалили задачу
-                            --task_counter_;
-                            task_flags_[i].store(0);
+                            task_flags_[i].store(TaskState::kFree);
+                            --task_counter_; // Уменьшаем общее число задач
+                            task_counter_.notify_all(); // Будим очередь
                         }
                     });
-
+                    init_flags_[i].store(InitState::kInitialized);
                     return;
                 }
-                uint64_t exp = 0;
-                if (task_flags_[i].compare_exchange_strong(exp, 1)) {
+                TaskState exp = TaskState::kFree;
+                if (task_flags_[i].compare_exchange_strong(exp, TaskState::kInitializing)) {
                     // Если тред существует, кладем ему таску и выставляем флаг
                     tasks_[i] = static_cast<void*>(lambda);
-                    task_flags_[i].store(2);
+                    task_flags_[i].store(TaskState::kWork);
+                    task_flags_[i].notify_one(); // Будим поток на работу
                     return;
                 }
             }
-            std::this_thread::yield();
+            // Ждем освобождения потока
+            task_counter_.wait(task_count);
         }
     }
 
-    void Done() const {
-        while (task_counter_.load()) {
-            if (task_counter_.load() < cores_) {
-                for (int i = 0; i < cores_; ++i) {
-                    if (!task_flags_[i].load()) {
-                        stop_flags_[i].store(true);
-                        if (jthreads_[i].joinable()) {
-                            jthreads_[i].join();
-                        }
-                    }
-                }
-            }
-            std::this_thread::yield();
+    void Done() {
+        death_.store(true);
+        size_t task_count = task_counter_.load();
+        while (task_count > 0) {
+            task_counter_.wait(task_count);
+            task_count = task_counter_.load();
         }
     }
 
     ~ThreadScope() {
+        Done();
         for (size_t i = 0; i < cores_; ++i) {
-            while (task_flags_[i].load()) {
-                std::this_thread::yield();
+
+            if (task_flags_[i].load() == TaskState::kFree) {
+                task_flags_[i].store(TaskState::kDeath);
+                task_flags_[i].notify_one();
+                if (jthreads_[i].joinable()) {
+                    jthreads_[i].join();
+                }
             }
-            stop_flags_[i].store(true);
         }
         delete[] jthreads_;
         delete[] task_flags_;
         delete[] init_flags_;
-        delete[] stop_flags_;
         delete[] tasks_;
     }
 };
+
+inline void AnalyzeFile(const Slice& files, std::atomic<bool>& error, size_t i) {
+    const char* name = files.Get(i);
+    std::ifstream file;
+    file.open(name, std::ios::in | std::ios::binary);
+    if (!file.is_open()) {
+        files.SetError(i, Errors::kOpenFile);
+        error.store(true);
+        return;
+    }
+    Errors runtime_error = Errors::kFree;
+    CountElements(&file, &runtime_error,
+        files.GetBytes(i), files.GetLines(i), files.GetWords(i), files.GetAlnums(i));
+    files.SetError(i, runtime_error);
+    if (runtime_error != Errors::kFree) {
+        error.store(true);
+    }
+}
 
 int main(int argc, char** argv) {
 
@@ -463,6 +649,7 @@ int main(int argc, char** argv) {
 
     if (help) {
         Help();
+        return 0;
     }
 
     if (lines == false && bytes == false && words == false && alnum == false) {
@@ -470,26 +657,15 @@ int main(int argc, char** argv) {
     }
 
     size_t n = files.Len();
+    // ReSharper disable CppDFAConstantConditions
+    // ReSharper disable CppDFAUnreachableCode
     if (n > 1) {
         std::atomic<bool> error{false};
         ThreadScope scope(n);
         for (size_t i = 0; i < n; ++i) {
+            // ReSharper disable once CppDFAUnreachableFunctionCall
             auto lambda_local = [&files, &error, i] {
-                const char* name = files.Get(i);
-                std::ifstream file;
-                file.open(name);
-                if (!file.is_open()) {
-                    files.SetError(i, -1);
-                    error.store(true);
-                    return;
-                }
-                int runtime_error = 0;
-                CountElements(&file, &runtime_error,
-                    files.GetBytes(i), files.GetLines(i), files.GetWords(i), files.GetAlnums(i));
-                files.SetError(i, runtime_error);
-                if (runtime_error) {
-                    error.store(true);
-                }
+                AnalyzeFile(files, error, i);
             };
 
             auto* lambda = new auto(lambda_local);
@@ -510,25 +686,15 @@ int main(int argc, char** argv) {
     }
 
     if (files.Len() == 1) {
-        const char* name = files.Get(0);
-        std::ifstream file;
-        file.open(name);
-        if (!file.is_open()) {
-            files.SetError(0, -1);
-            files.PrintResult(0, lines, bytes, words, alnum);
-            return 1;
-        }
-        int runtime_error = 0;
-        CountElements(&file, &runtime_error,
-            files.GetBytes(0), files.GetLines(0), files.GetWords(0), files.GetAlnums(0));
-        files.SetError(0, runtime_error);
+        std::atomic<bool> error{false};
+        AnalyzeFile(files, error, 0);
         files.PrintResult(0, lines, bytes, words, alnum);
-        if (runtime_error) {
+        if (error.load()) {
             return 1;
         }
-
-        return 0;
     }
+    // ReSharper restore CppDFAConstantConditions
+    // ReSharper restore CppDFAUnreachableCode
 
     return 0;
 }
